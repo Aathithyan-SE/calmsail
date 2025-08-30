@@ -111,12 +111,12 @@ export async function GET(request: NextRequest) {
 
     const employeeStatus = allEmployees.map(emp => {
       const checkIn = selectedDateCheckIns.find(check => 
-        check.userId.toString() === emp._id.toString()
+        check.userId.toString() === (emp._id as string).toString()
       );
       
       return {
         ...emp,
-        hasCheckedInToday: selectedDateCheckInIds.has(emp._id.toString()),
+        hasCheckedInToday: selectedDateCheckInIds.has((emp._id as string).toString()),
         todayWellnessScore: checkIn?.overallScore || null,
         checkInDate: checkIn ? checkIn.date : null,
         checkInTime: checkIn ? checkIn.completedAt : null
@@ -212,7 +212,7 @@ function generateAlerts(teamData: any[], employeeStatus: any[]): any[] {
   }
 
   // Check for consistent low scores (last 3 days)
-  const consistentlyLow = [];
+  const consistentlyLow: string[] = [];
   const employeeGroups = teamData.reduce((acc, item) => {
     if (!acc[item._id.userId]) acc[item._id.userId] = [];
     acc[item._id.userId].push(item);
@@ -225,7 +225,7 @@ function generateAlerts(teamData: any[], employeeStatus: any[]): any[] {
       .slice(0, 3)
       .map((item: any) => item.wellnessScore);
     
-    if (recentScores.length >= 3 && recentScores.every(score => score < 60)) {
+    if (recentScores.length >= 3 && recentScores.every((score: number) => score < 60)) {
       consistentlyLow.push(employeeData[0].name);
     }
   });

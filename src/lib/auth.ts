@@ -27,7 +27,7 @@ export async function verifyPassword(password: string, hashedPassword: string): 
 
 export function generateToken(user: IUser): string {
   const payload: JWTPayload = {
-    userId: user._id.toString(),
+    userId: (user._id as string).toString(),
     email: user.email,
     role: user.role,
     name: user.name,

@@ -1,3 +1,4 @@
+// @ts-expect-error: Missing type definitions for sentiment module
 import Sentiment from 'sentiment';
 
 const sentiment = new Sentiment();

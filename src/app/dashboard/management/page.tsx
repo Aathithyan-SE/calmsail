@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -43,7 +42,7 @@ interface DashboardStats {
 
 export default function ManagementDashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<{ name: string; role: string } | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [timeframe, setTimeframe] = useState('7');
@@ -53,33 +52,9 @@ export default function ManagementDashboard() {
   const [error, setError] = useState('');
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [employeeDetails, setEmployeeDetails] = useState<any>(null);
+  const [employeeDetails, setEmployeeDetails] = useState<{ history: unknown[]; statistics: Record<string, unknown>; insights: string[] } | null>(null);
 
-  useEffect(() => {
-    fetchUserData();
-    fetchDashboardData();
-  }, [timeframe, selectedDate]);
-
-  useEffect(() => {
-    // Set up auto-refresh every 30 seconds
-    const interval = setInterval(() => {
-      fetchDashboardData();
-    }, 30000);
-    
-    setRefreshInterval(interval);
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [timeframe, selectedDate]);
-
-  useEffect(() => {
-    return () => {
-      if (refreshInterval) clearInterval(refreshInterval);
-    };
-  }, [refreshInterval]);
-
-  const fetchUserData = async () => {
+  const fetchUserData = useCallback(async () => {
     try {
       const response = await fetch('/api/auth/me');
       if (response.ok) {
@@ -96,30 +71,43 @@ export default function ManagementDashboard() {
       console.error('Error fetching user data:', error);
       router.push('/auth/login');
     }
-  };
+  }, [router]);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       const response = await fetch(`/api/wellness/team?days=${timeframe}&date=${selectedDate}`);
       if (response.ok) {
         const data = await response.json();
         
         // Transform wellness team data to match existing interface  
-        const transformedEmployees = (data.employeeStatus || []).map((emp: any) => {
+        const transformedEmployees = (data.employeeStatus || []).map((emp: { 
+          _id: string; 
+          name: string; 
+          employeeId: string; 
+          vessel: string; 
+          department: string; 
+          todayWellnessScore: number | null; 
+          hasCheckedInToday: boolean; 
+          checkInTime?: string 
+        }) => {
           // Calculate average wellness score from historical data
-          const empHistoricalData = (data.teamData || []).filter((item: any) => 
+          const empHistoricalData = (data.teamData || []).filter((item: {
+            _id: { userId: string };
+            wellnessScore: number;
+            date: string;
+          }) => 
             item._id?.userId?.toString() === emp._id?.toString()
           );
           const avgScore = empHistoricalData.length > 0 
-            ? empHistoricalData.reduce((sum: number, item: any) => sum + (item.wellnessScore || 0), 0) / empHistoricalData.length
+            ? empHistoricalData.reduce((sum: number, item: { wellnessScore: number }) => sum + (item.wellnessScore || 0), 0) / empHistoricalData.length
             : null;
 
           // Check for concerning patterns (3+ consecutive low scores)
           const recentScores = empHistoricalData
-            .sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+            .sort((a: { date: string }, b: { date: string }) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
             .slice(0, 3)
-            .map((item: any) => item.wellnessScore)
-            .filter(score => score !== null && score !== undefined);
+            .map((item: { wellnessScore: number }) => item.wellnessScore)
+            .filter((score: number) => score !== null && score !== undefined);
           
           const concerningPattern = recentScores.length >= 3 && 
             recentScores.every((score: number) => score < 60);
@@ -128,7 +116,7 @@ export default function ManagementDashboard() {
           const latestCheckInDate = emp.hasCheckedInToday 
             ? emp.checkInTime || new Date().toISOString()
             : empHistoricalData.length > 0 
-              ? empHistoricalData.sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())[0].date
+              ? empHistoricalData.sort((a: { date: string }, b: { date: string }) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())[0].date
               : null;
 
           // Determine risk level with better null checking
@@ -186,7 +174,31 @@ export default function ManagementDashboard() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [timeframe, selectedDate, router]);
+
+  useEffect(() => {
+    fetchUserData();
+    fetchDashboardData();
+  }, [timeframe, selectedDate, fetchUserData, fetchDashboardData]);
+
+  useEffect(() => {
+    // Set up auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000);
+    
+    setRefreshInterval(interval);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [fetchDashboardData]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshInterval) clearInterval(refreshInterval);
+    };
+  }, [refreshInterval]);
 
   const handleLogout = async () => {
     try {
@@ -214,35 +226,6 @@ export default function ManagementDashboard() {
     fetchEmployeeDetails(employee.id);
   };
 
-  const getRiskBadgeColor = (riskLevel: string) => {
-    switch (riskLevel) {
-      case 'high':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'medium':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'low':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'very_low':
-        return 'bg-green-100 text-green-800 border-green-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getRiskLabel = (riskLevel: string) => {
-    switch (riskLevel) {
-      case 'high':
-        return 'High Risk';
-      case 'medium':
-        return 'Medium Risk';
-      case 'low':
-        return 'Low Risk';
-      case 'very_low':
-        return 'Very Low Risk';
-      default:
-        return 'Unknown';
-    }
-  };
 
   const getInitials = (name: string) => {
     return name
@@ -557,9 +540,9 @@ export default function ManagementDashboard() {
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between mb-2">
                     <div className={`text-2xl font-bold ${
-                      stats.avgWellnessScore >= 80 ? 'text-green-600' :
-                      stats.avgWellnessScore >= 60 ? 'text-yellow-600' :
-                      stats.avgWellnessScore >= 40 ? 'text-orange-600' :
+                      (stats.avgWellnessScore ?? 0) >= 80 ? 'text-green-600' :
+                      (stats.avgWellnessScore ?? 0) >= 60 ? 'text-yellow-600' :
+                      (stats.avgWellnessScore ?? 0) >= 40 ? 'text-orange-600' :
                       stats.avgWellnessScore ? 'text-red-600' : 'text-gray-400'
                     }`}>
                       {stats.avgWellnessScore ? `${stats.avgWellnessScore}%` : 'N/A'}
@@ -593,7 +576,7 @@ export default function ManagementDashboard() {
                 </CardTitle>
                 <CardDescription>
                   {sortedEmployees.length > 0 ? (
-                    <>Monitor your crew's wellbeing and identify those who may need support. Click any employee card for detailed insights.</>
+                    <>Monitor your crew&apos;s wellbeing and identify those who may need support. Click any employee card for detailed insights.</>
                   ) : (
                     <>Your employee wellness data will appear here once crew members start completing their daily check-ins.</>
                   )}
@@ -781,25 +764,25 @@ export default function ManagementDashboard() {
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       <div className="bg-blue-50 p-4 rounded-lg text-center">
                         <div className="text-2xl font-bold text-blue-600">
-                          {employeeDetails.statistics?.averageScore || 'N/A'}%
+                          {(employeeDetails.statistics as { averageScore?: number })?.averageScore || 'N/A'}%
                         </div>
                         <div className="text-sm text-blue-700">Average Score</div>
                       </div>
                       <div className="bg-green-50 p-4 rounded-lg text-center">
                         <div className="text-2xl font-bold text-green-600">
-                          {employeeDetails.statistics?.totalCheckins || 0}
+                          {(employeeDetails.statistics as { totalCheckins?: number })?.totalCheckins || 0}
                         </div>
                         <div className="text-sm text-green-700">Total Check-ins</div>
                       </div>
                       <div className="bg-orange-50 p-4 rounded-lg text-center">
                         <div className="text-2xl font-bold text-orange-600">
-                          {employeeDetails.statistics?.averageStress?.toFixed(1) || 'N/A'}
+                          {typeof (employeeDetails.statistics as { averageStress?: number })?.averageStress === 'number' ? (employeeDetails.statistics as { averageStress?: number }).averageStress?.toFixed(1) : 'N/A'}
                         </div>
                         <div className="text-sm text-orange-700">Avg Stress Level</div>
                       </div>
                       <div className="bg-purple-50 p-4 rounded-lg text-center">
                         <div className="text-2xl font-bold text-purple-600">
-                          {employeeDetails.statistics?.trend || 'stable'}
+                          {(employeeDetails.statistics as { trend?: string })?.trend || 'stable'}
                         </div>
                         <div className="text-sm text-purple-700">Trend</div>
                       </div>
@@ -809,7 +792,7 @@ export default function ManagementDashboard() {
                     <div>
                       <h3 className="text-lg font-semibold mb-4">Recent Wellness Check-ins</h3>
                       <div className="space-y-3 max-h-60 overflow-y-auto">
-                        {employeeDetails.history?.slice(0, 10).map((checkin: any, index: number) => (
+                        {(employeeDetails.history as { date: string; overallScore: number; responses?: { question: string; answer: string }[] }[])?.slice(0, 10).map((checkin, index: number) => (
                           <div key={index} className="border rounded-lg p-4 bg-gray-50">
                             <div className="flex justify-between items-start mb-2">
                               <div className="font-medium">
@@ -823,7 +806,7 @@ export default function ManagementDashboard() {
                             {checkin.responses && checkin.responses.length > 0 && (
                               <div className="text-sm text-gray-600">
                                 <div className="font-medium mb-1">Responses:</div>
-                                {checkin.responses.slice(0, 2).map((response: any, idx: number) => (
+                                {checkin.responses.slice(0, 2).map((response, idx: number) => (
                                   <div key={idx} className="mb-1">
                                     <span className="font-medium">Q: </span>{response.question}
                                     <br />
